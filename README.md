@@ -1,9 +1,11 @@
 # AWS 3-Tier Multi-VPC Peering Architecture with Banking Microservices
+
 ### End-to-End Enterprise Network Isolation, Application Load Balancer, Route 53 DNS & HTTPS Setup
 
 ---
 
 ## 📑 Table of Contents
+
 - [1. Executive Summary](#1-executive-summary)
 - [2. Architectural Diagram](#2-architectural-diagram)
 - [3. Network Specifications & IP Plan](#3-network-specifications--ip-plan)
@@ -24,13 +26,14 @@
 
 ## 1. Executive Summary
 
-This project implements an enterprise-grade, secure **3-Tier Retail Banking Microservices Architecture** on AWS in the **Singapore (`ap-southeast-1`)** region. 
+This project implements an enterprise-grade, secure **3-Tier Retail Banking Microservices Architecture** on AWS in the **Singapore (`ap-southeast-1`)** region.
 
 ### Key Architectural Highlights:
-* **Microservices Chaining:** `customer-profile-svc` (Profile) $\rightarrow$ `account-svc` (Account) $\rightarrow$ `statement-svc` (Statement).
-* **Multi-VPC Isolation:** Each service resides in its own dedicated Amazon Virtual Private Cloud (VPC) with unique non-overlapping IPv4 CIDR blocks.
-* **Non-Transitive VPC Peering:** Backend services have zero public ingress. Communications between tiers are strictly routed across private VPC Peering connections (`Profile <-> Account` and `Account <-> Statement`).
-* **High Availability & Security Ingress:** External user traffic enters via an Internet-facing **Application Load Balancer (ALB)** spanning multiple Availability Zones, secured with **AWS Certificate Manager (ACM)** SSL/TLS encryption on **Port 443** with automatic HTTP-to-HTTPS redirect, routed via **Amazon Route 53** custom domain (`profile.achn-chan.space`).
+
+- **Microservices Chaining:** `customer-profile-svc` (Profile) $\rightarrow$ `account-svc` (Account) $\rightarrow$ `statement-svc` (Statement).
+- **Multi-VPC Isolation:** Each service resides in its own dedicated Amazon Virtual Private Cloud (VPC) with unique non-overlapping IPv4 CIDR blocks.
+- **Non-Transitive VPC Peering:** Backend services have zero public ingress. Communications between tiers are strictly routed across private VPC Peering connections (`Profile <-> Account` and `Account <-> Statement`).
+- **High Availability & Security Ingress:** External user traffic enters via an Internet-facing **Application Load Balancer (ALB)** spanning multiple Availability Zones, secured with **AWS Certificate Manager (ACM)** SSL/TLS encryption on **Port 443** with automatic HTTP-to-HTTPS redirect, routed via **Amazon Route 53** custom domain (`banking.achn-chan.space`).
 
 ---
 
@@ -40,7 +43,7 @@ This project implements an enterprise-grade, secure **3-Tier Retail Banking Micr
                                   [ User / Public Internet ]
                                               │
                                               ▼
-                             https://profile.achn-chan.space
+                             https://banking.achn-chan.space
                                               │
                                               ▼
                                  [ Route 53 Hosted Zone ]
@@ -99,112 +102,122 @@ This project implements an enterprise-grade, secure **3-Tier Retail Banking Micr
 
 ## 3. Network Specifications & IP Plan
 
-| Resource Name | Layer / Tier | VPC CIDR | Subnet CIDR & AZ | Private IP | Listening Port | Upstream Target |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **`hc-profile-vpc`** | Profile Tier | `10.0.0.0/16` | `10.0.1.0/24` (1a)<br>`10.0.2.0/24` (1b) | `10.0.1.31` | `9091` (`customer-profile-svc`) | `http://192.168.1.141:9092` |
-| **`hc-account-vpc`** | Backend Account Tier | `192.168.0.0/16` | `192.168.1.0/24` (1a) | `192.168.1.141` | `9092` (`account-svc`) | `http://172.16.1.201:9093` |
-| **`hc-statement-vpc`**| Backend Statement Tier| `172.16.0.0/16` | `172.16.1.0/24` (1a) | `172.16.1.201` | `9093` (`statement-svc`) | None (Leaf Node) |
-| **`hc-profile-alb`** | Ingress Load Balancer | `10.0.0.0/16` | Multi-AZ (1a & 1b) | Dynamic AWS ENIs | `80` (HTTP) $\rightarrow$ 301 Redirect<br>`443` (HTTPS) | `hc-profile-tg` (:9091) |
+| Resource Name          | Layer / Tier           | VPC CIDR         | Subnet CIDR & AZ                         | Private IP       | Listening Port                                          | Upstream Target             |
+| :--------------------- | :--------------------- | :--------------- | :--------------------------------------- | :--------------- | :------------------------------------------------------ | :-------------------------- |
+| **`hc-profile-vpc`**   | Profile Tier           | `10.0.0.0/16`    | `10.0.1.0/24` (1a)<br>`10.0.2.0/24` (1b) | `10.0.1.31`      | `9091` (`customer-profile-svc`)                         | `http://192.168.1.141:9092` |
+| **`hc-account-vpc`**   | Backend Account Tier   | `192.168.0.0/16` | `192.168.1.0/24` (1a)                    | `192.168.1.141`  | `9092` (`account-svc`)                                  | `http://172.16.1.201:9093`  |
+| **`hc-statement-vpc`** | Backend Statement Tier | `172.16.0.0/16`  | `172.16.1.0/24` (1a)                     | `172.16.1.201`   | `9093` (`statement-svc`)                                | None (Leaf Node)            |
+| **`hc-profile-alb`**   | Ingress Load Balancer  | `10.0.0.0/16`    | Multi-AZ (1a & 1b)                       | Dynamic AWS ENIs | `80` (HTTP) $\rightarrow$ 301 Redirect<br>`443` (HTTPS) | `hc-profile-tg` (:9091)     |
 
 ---
 
 ## 4. Step-by-Step Implementation Guide
 
 ### Step 1: VPCs & Subnets Foundation
+
 1. Navigate to **VPC Console** in region **Singapore (`ap-southeast-1`)**.
 2. **Create VPCs:**
-   * **Profile:** Name = `hc-profile-vpc`, IPv4 CIDR = `10.0.0.0/16`.
-   * **Account:** Name = `hc-account-vpc`, IPv4 CIDR = `192.168.0.0/16`.
-   * **Statement:** Name = `hc-statement-vpc`, IPv4 CIDR = `172.16.0.0/16`.
+   - **Profile:** Name = `hc-profile-vpc`, IPv4 CIDR = `10.0.0.0/16`.
+   - **Account:** Name = `hc-account-vpc`, IPv4 CIDR = `192.168.0.0/16`.
+   - **Statement:** Name = `hc-statement-vpc`, IPv4 CIDR = `172.16.0.0/16`.
 3. **Enable DNS Hostnames:**
-   * On all 3 VPCs: Select VPC $\rightarrow$ **Actions** $\rightarrow$ **Edit VPC settings** $\rightarrow$ Check **Enable DNS hostnames** $\rightarrow$ **Save changes**.
+   - On all 3 VPCs: Select VPC $\rightarrow$ **Actions** $\rightarrow$ **Edit VPC settings** $\rightarrow$ Check **Enable DNS hostnames** $\rightarrow$ **Save changes**.
 4. **Create Subnets:**
-   * `hc-profile-subnet-01`: CIDR `10.0.1.0/24`, AZ `ap-southeast-1a`.
-   * `hc-profile-subnet-02`: CIDR `10.0.2.0/24`, AZ `ap-southeast-1b` *(Required for ALB multi-AZ requirement)*.
-   * `hc-account-subnet-01`: CIDR `192.168.1.0/24`, AZ `ap-southeast-1a`.
-   * `hc-statement-subnet-01`: CIDR `172.16.1.0/24`, AZ `ap-southeast-1a`.
+   - `hc-profile-subnet-01`: CIDR `10.0.1.0/24`, AZ `ap-southeast-1a`.
+   - `hc-profile-subnet-02`: CIDR `10.0.2.0/24`, AZ `ap-southeast-1b` _(Required for ALB multi-AZ requirement)_.
+   - `hc-account-subnet-01`: CIDR `192.168.1.0/24`, AZ `ap-southeast-1a`.
+   - `hc-statement-subnet-01`: CIDR `172.16.1.0/24`, AZ `ap-southeast-1a`.
 
 ---
 
 ### Step 2: Internet Gateways (IGW)
+
 1. Navigate to **Internet gateways** $\rightarrow$ **Create internet gateway**:
-   * Create `hc-profile-igw` $\rightarrow$ Attach to `hc-profile-vpc`.
-   * Create `hc-account-igw` $\rightarrow$ Attach to `hc-account-vpc`.
-   * Create `hc-statement-igw` $\rightarrow$ Attach to `hc-statement-vpc`.
+   - Create `hc-profile-igw` $\rightarrow$ Attach to `hc-profile-vpc`.
+   - Create `hc-account-igw` $\rightarrow$ Attach to `hc-account-vpc`.
+   - Create `hc-statement-igw` $\rightarrow$ Attach to `hc-statement-vpc`.
 
 ---
 
 ### Step 3: Intra-Region VPC Peering Connections
+
 1. **Peering 1 (`profile-to-account-pcx`):**
-   * Go to **Peering connections** $\rightarrow$ **Create peering connection**.
-   * Name: `profile-to-account-pcx`
-   * Requester VPC: `hc-profile-vpc` (`10.0.0.0/16`)
-   * Accepter VPC: `hc-account-vpc` (`192.168.0.0/16`)
-   * Click **Create peering connection**, then select it $\rightarrow$ **Actions** $\rightarrow$ **Accept request**.
+   - Go to **Peering connections** $\rightarrow$ **Create peering connection**.
+   - Name: `profile-to-account-pcx`
+   - Requester VPC: `hc-profile-vpc` (`10.0.0.0/16`)
+   - Accepter VPC: `hc-account-vpc` (`192.168.0.0/16`)
+   - Click **Create peering connection**, then select it $\rightarrow$ **Actions** $\rightarrow$ **Accept request**.
 2. **Peering 2 (`account-to-statement-pcx`):**
-   * Create peering connection: Name: `account-to-statement-pcx`.
-   * Requester VPC: `hc-account-vpc` (`192.168.0.0/16`).
-   * Accepter VPC: `hc-statement-vpc` (`172.16.0.0/16`).
-   * Click **Create peering connection**, then select it $\rightarrow$ **Actions** $\rightarrow$ **Accept request**.
+   - Create peering connection: Name: `account-to-statement-pcx`.
+   - Requester VPC: `hc-account-vpc` (`192.168.0.0/16`).
+   - Accepter VPC: `hc-statement-vpc` (`172.16.0.0/16`).
+   - Click **Create peering connection**, then select it $\rightarrow$ **Actions** $\rightarrow$ **Accept request**.
 
 ---
 
 ### Step 4: Route Tables & Bidirectional Peering Routing
 
 #### 1. Profile Route Table (`hc-profile-public-rtb`)
-* **VPC:** `hc-profile-vpc`
-* **Subnet Associations:** Explicitly associate `hc-profile-subnet-01` and `hc-profile-subnet-02`.
-* **Routes:**
-  * `0.0.0.0/0` $\rightarrow$ Target: `Internet Gateway` (`hc-profile-igw`)
-  * `192.168.0.0/16` $\rightarrow$ Target: `Peering Connection` (`profile-to-account-pcx`)
+
+- **VPC:** `hc-profile-vpc`
+- **Subnet Associations:** Explicitly associate `hc-profile-subnet-01` and `hc-profile-subnet-02`.
+- **Routes:**
+  - `0.0.0.0/0` $\rightarrow$ Target: `Internet Gateway` (`hc-profile-igw`)
+  - `192.168.0.0/16` $\rightarrow$ Target: `Peering Connection` (`profile-to-account-pcx`)
 
 #### 2. Account Route Table (`hc-account-public-rtb`)
-* **VPC:** `hc-account-vpc`
-* **Subnet Associations:** Explicitly associate `hc-account-subnet-01`.
-* **Routes:**
-  * `0.0.0.0/0` $\rightarrow$ Target: `Internet Gateway` (`hc-account-igw`)
-  * `10.0.0.0/16` $\rightarrow$ Target: `Peering Connection` (`profile-to-account-pcx`) *(Return path for Profile)*
-  * `172.16.0.0/16` $\rightarrow$ Target: `Peering Connection` (`account-to-statement-pcx`) *(Forward path to Statement)*
+
+- **VPC:** `hc-account-vpc`
+- **Subnet Associations:** Explicitly associate `hc-account-subnet-01`.
+- **Routes:**
+  - `0.0.0.0/0` $\rightarrow$ Target: `Internet Gateway` (`hc-account-igw`)
+  - `10.0.0.0/16` $\rightarrow$ Target: `Peering Connection` (`profile-to-account-pcx`) _(Return path for Profile)_
+  - `172.16.0.0/16` $\rightarrow$ Target: `Peering Connection` (`account-to-statement-pcx`) _(Forward path to Statement)_
 
 #### 3. Statement Route Table (`hc-statement-public-rtb`)
-* **VPC:** `hc-statement-vpc`
-* **Subnet Associations:** Explicitly associate `hc-statement-subnet-01`.
-* **Routes:**
-  * `0.0.0.0/0` $\rightarrow$ Target: `Internet Gateway` (`hc-statement-igw`)
-  * `192.168.0.0/16` $\rightarrow$ Target: `Peering Connection` (`account-to-statement-pcx`) *(Return path for Account)*
+
+- **VPC:** `hc-statement-vpc`
+- **Subnet Associations:** Explicitly associate `hc-statement-subnet-01`.
+- **Routes:**
+  - `0.0.0.0/0` $\rightarrow$ Target: `Internet Gateway` (`hc-statement-igw`)
+  - `192.168.0.0/16` $\rightarrow$ Target: `Peering Connection` (`account-to-statement-pcx`) _(Return path for Account)_
 
 ---
 
 ### Step 5: Security Groups & Private Network Lockdown
 
 #### 1. `hc-alb-sg` (ALB Public Ingress)
-* **VPC:** `hc-profile-vpc`
-* **Inbound Rules:**
-  * `HTTP` (Port 80) $\rightarrow$ Source: `0.0.0.0/0`
-  * `HTTPS` (Port 443) $\rightarrow$ Source: `0.0.0.0/0`
-* **Outbound Rules:** All traffic (`0.0.0.0/0`)
+
+- **VPC:** `hc-profile-vpc`
+- **Inbound Rules:**
+  - `HTTP` (Port 80) $\rightarrow$ Source: `0.0.0.0/0`
+  - `HTTPS` (Port 443) $\rightarrow$ Source: `0.0.0.0/0`
+- **Outbound Rules:** All traffic (`0.0.0.0/0`)
 
 #### 2. `hc-profile-sg` (Profile EC2 Ingress)
-* **VPC:** `hc-profile-vpc`
-* **Inbound Rules:**
-  * `Custom TCP` (Port 9091) $\rightarrow$ Source: `hc-alb-sg` (or `0.0.0.0/0`)
-  * `SSH` (Port 22) $\rightarrow$ Source: Admin IP
-  * `All ICMP - IPv4` $\rightarrow$ Source: `0.0.0.0/0`
-* **Outbound Rules:** All traffic (`0.0.0.0/0`)
+
+- **VPC:** `hc-profile-vpc`
+- **Inbound Rules:**
+  - `Custom TCP` (Port 9091) $\rightarrow$ Source: `hc-alb-sg` (or `0.0.0.0/0`)
+  - `SSH` (Port 22) $\rightarrow$ Source: Admin IP
+  - `All ICMP - IPv4` $\rightarrow$ Source: `0.0.0.0/0`
+- **Outbound Rules:** All traffic (`0.0.0.0/0`)
 
 #### 3. `hc-backend-sg` (Account EC2 Ingress - Private Lockdown)
-* **VPC:** `hc-account-vpc`
-* **Inbound Rules:**
-  * `Custom TCP` (Port 9092) $\rightarrow$ Source: **`10.0.0.0/16`** (Profile VPC CIDR only)
-  * `All ICMP - IPv4` $\rightarrow$ Source: **`10.0.0.0/16`** (Profile VPC CIDR only)
-* **Outbound Rules:** All traffic (`0.0.0.0/0`)
+
+- **VPC:** `hc-account-vpc`
+- **Inbound Rules:**
+  - `Custom TCP` (Port 9092) $\rightarrow$ Source: **`10.0.0.0/16`** (Profile VPC CIDR only)
+  - `All ICMP - IPv4` $\rightarrow$ Source: **`10.0.0.0/16`** (Profile VPC CIDR only)
+- **Outbound Rules:** All traffic (`0.0.0.0/0`)
 
 #### 4. `hc-statement-sg` (Statement EC2 Ingress - Private Lockdown)
-* **VPC:** `hc-statement-vpc`
-* **Inbound Rules:**
-  * `Custom TCP` (Port 9093) $\rightarrow$ Source: **`192.168.0.0/16`** (Account VPC CIDR only)
-  * `All ICMP - IPv4` $\rightarrow$ Source: **`192.168.0.0/16`** (Account VPC CIDR only)
-* **Outbound Rules:** All traffic (`0.0.0.0/0`)
+
+- **VPC:** `hc-statement-vpc`
+- **Inbound Rules:**
+  - `Custom TCP` (Port 9093) $\rightarrow$ Source: **`192.168.0.0/16`** (Account VPC CIDR only)
+  - `All ICMP - IPv4` $\rightarrow$ Source: **`192.168.0.0/16`** (Account VPC CIDR only)
+- **Outbound Rules:** All traffic (`0.0.0.0/0`)
 
 ---
 
@@ -213,9 +226,11 @@ This project implements an enterprise-grade, secure **3-Tier Retail Banking Micr
 Launch instances in reverse dependency order: **Statement $\rightarrow$ Account $\rightarrow$ Profile**.
 
 #### Instance 1: Statement Service (`statement-instance`)
-* **VPC / Subnet:** `hc-statement-vpc` / `hc-statement-subnet-01`
-* **Private IP:** `172.16.1.201` | **Security Group:** `hc-statement-sg`
-* **Run in terminal:**
+
+- **VPC / Subnet:** `hc-statement-vpc` / `hc-statement-subnet-01`
+- **Private IP:** `172.16.1.201` | **Security Group:** `hc-statement-sg`
+- **Run in terminal:**
+
 ```bash
 sudo dnf install -y curl unzip
 curl -LO https://github.com/nicholasjackson/fake-service/releases/download/v0.26.2/fake_service_linux_amd64.zip
@@ -245,9 +260,11 @@ sudo systemctl status statement-svc
 ```
 
 #### Instance 2: Account Service (`account-instance`)
-* **VPC / Subnet:** `hc-account-vpc` / `hc-account-subnet-01`
-* **Private IP:** `192.168.1.141` | **Security Group:** `hc-backend-sg`
-* **Run in terminal:**
+
+- **VPC / Subnet:** `hc-account-vpc` / `hc-account-subnet-01`
+- **Private IP:** `192.168.1.141` | **Security Group:** `hc-backend-sg`
+- **Run in terminal:**
+
 ```bash
 sudo dnf install -y curl unzip
 curl -LO https://github.com/nicholasjackson/fake-service/releases/download/v0.26.2/fake_service_linux_amd64.zip
@@ -278,9 +295,11 @@ sudo systemctl status account-svc
 ```
 
 #### Instance 3: Customer Profile Service (`profile-instance`)
-* **VPC / Subnet:** `hc-profile-vpc` / `hc-profile-subnet-01`
-* **Private IP:** `10.0.1.31` | **Security Group:** `hc-profile-sg`
-* **Run in terminal:**
+
+- **VPC / Subnet:** `hc-profile-vpc` / `hc-profile-subnet-01`
+- **Private IP:** `10.0.1.31` | **Security Group:** `hc-profile-sg`
+- **Run in terminal:**
+
 ```bash
 sudo dnf install -y curl unzip
 curl -LO https://github.com/nicholasjackson/fake-service/releases/download/v0.26.2/fake_service_linux_amd64.zip
@@ -315,49 +334,53 @@ sudo systemctl status customer-profile-svc
 ### Step 7: Application Load Balancer (ALB) & Target Group Setup
 
 1. **Target Group (`hc-profile-tg`):**
-   * Target type: `Instances` | Name: `hc-profile-tg` | Protocol: `HTTP` | Port: `9091`
-   * VPC: `hc-profile-vpc` | Health check path: `/`
-   * Register targets: Select `profile-instance` (`10.0.1.31`), port `9091` $\rightarrow$ Click **Include as pending below** $\rightarrow$ **Create target group**.
+   - Target type: `Instances` | Name: `hc-profile-tg` | Protocol: `HTTP` | Port: `9091`
+   - VPC: `hc-profile-vpc` | Health check path: `/`
+   - Register targets: Select `profile-instance` (`10.0.1.31`), port `9091` $\rightarrow$ Click **Include as pending below** $\rightarrow$ **Create target group**.
 2. **Application Load Balancer (`hc-profile-alb`):**
-   * Name: `hc-profile-alb` | Scheme: `Internet-facing` | IP type: `IPv4`
-   * VPC: `hc-profile-vpc`
-   * Mappings: `ap-southeast-1a` (`hc-profile-subnet-01`) and `ap-southeast-1b` (`hc-profile-subnet-02`)
-   * Security group: `hc-alb-sg`
-   * Listener: `HTTP:80` $\rightarrow$ Forward to `hc-profile-tg` $\rightarrow$ Click **Create load balancer**.
+   - Name: `hc-profile-alb` | Scheme: `Internet-facing` | IP type: `IPv4`
+   - VPC: `hc-profile-vpc`
+   - Mappings: `ap-southeast-1a` (`hc-profile-subnet-01`) and `ap-southeast-1b` (`hc-profile-subnet-02`)
+   - Security group: `hc-alb-sg`
+   - Listener: `HTTP:80` $\rightarrow$ Forward to `hc-profile-tg` $\rightarrow$ Click **Create load balancer**.
 
 ---
 
 ### Step 8: ACM SSL/TLS Certificate & Route 53 Custom Domain
 
 1. **AWS Certificate Manager (ACM):**
-   * In `ap-southeast-1`, click **Request certificate** $\rightarrow$ **Request a public certificate**.
-   * Domain name: `*.achn-chan.space`.
-   * Validation method: `DNS validation`.
-   * Click **Create records in Route 53** $\rightarrow$ Certificate status transitions to **`Issued`**.
+   - In `ap-southeast-1`, click **Request certificate** $\rightarrow$ **Request a public certificate**.
+   - Domain name: `*.achn-chan.space`.
+   - Validation method: `DNS validation`.
+   - Click **Create records in Route 53** $\rightarrow$ Certificate status transitions to **`Issued`**.
 2. **ALB HTTPS Listener & Redirect:**
-   * In `hc-profile-alb` Listeners:
-     * Click **Add listener** $\rightarrow$ Protocol: `HTTPS:443` $\rightarrow$ Action: Forward to `hc-profile-tg` $\rightarrow$ Default SSL certificate: `*.achn-chan.space`.
-     * Edit the `HTTP:80` listener $\rightarrow$ Change default action to **Redirect to URL** $\rightarrow$ Protocol: `HTTPS:443`, Status code: `301 - Permanently moved`.
+   - In `hc-profile-alb` Listeners:
+     - Click **Add listener** $\rightarrow$ Protocol: `HTTPS:443` $\rightarrow$ Action: Forward to `hc-profile-tg` $\rightarrow$ Default SSL certificate: `*.achn-chan.space`.
+     - Edit the `HTTP:80` listener $\rightarrow$ Change default action to **Redirect to URL** $\rightarrow$ Protocol: `HTTPS:443`, Status code: `301 - Permanently moved`.
 3. **Route 53 DNS Record:**
-   * Go to **Route 53** $\rightarrow$ Hosted zones $\rightarrow$ `achn-chan.space` $\rightarrow$ **Create record**.
-   * Record name: `profile` (Target: `profile.achn-chan.space`)
-   * Record type: `A` | **Alias:** Toggle ON
-   * Route traffic to:
-     * Endpoint: `Alias to Application and Classic Load Balancer`
-     * Region: `Asia Pacific (Singapore) [ap-southeast-1]`
-     * Load Balancer: Select `hc-profile-alb`
-   * Routing policy: `Simple routing` $\rightarrow$ Click **Create records**.
+   - Go to **Route 53** $\rightarrow$ Hosted zones $\rightarrow$ `achn-chan.space` $\rightarrow$ **Create record**.
+   - Record name: `banking` (Target: `banking.achn-chan.space`)
+   - Record type: `A` | **Alias:** Toggle ON
+   - Route traffic to:
+     - Endpoint: `Alias to Application and Classic Load Balancer`
+     - Region: `Asia Pacific (Singapore) [ap-southeast-1]`
+     - Load Balancer: Select `hc-profile-alb`
+   - Routing policy: `Simple routing` $\rightarrow$ Click **Create records**.
 
 ---
 
 ## 5. Verification & Testing
 
 ### Test 1: Intermediate Chain Verification (Account $\rightarrow$ Statement)
+
 SSH or connect to `account-instance` (`192.168.1.141`):
+
 ```bash
 curl http://localhost:9092
 ```
+
 Expected Output:
+
 ```json
 {
   "name": "account-svc",
@@ -380,13 +403,17 @@ Expected Output:
 ```
 
 ### Test 2: Full End-to-End HTTPS Microservices Verification
+
 Run from your local workstation terminal:
+
 ```bash
-curl -i https://profile.achn-chan.space
+curl -i https://banking.achn-chan.space
 ```
+
 Expected Output (`HTTP/2 200 OK` with full chained JSON):
+
 ```json
-HTTP/2 200 
+HTTP/2 200
 date: Sun, 11 Oct 2026 11:20:00 GMT
 content-type: application/json
 content-length: 1248
@@ -430,31 +457,36 @@ server: awselb/2.0
 ## 6. Troubleshooting & Engineering Lessons Learned
 
 ### Lesson 1: Package Manager Discrepancy (`apt-get` vs `dnf`)
-* **Symptom:** In User Data / startup scripts, `apt-get: command not found` error occurred in `/var/log/cloud-init-output.log`.
-* **Root Cause:** Instances were launched with **Amazon Linux 2023** (RPM-based) instead of Ubuntu (Debian-based).
-* **Fix:** Use `sudo dnf install -y curl unzip` on Amazon Linux.
+
+- **Symptom:** In User Data / startup scripts, `apt-get: command not found` error occurred in `/var/log/cloud-init-output.log`.
+- **Root Cause:** Instances were launched with **Amazon Linux 2023** (RPM-based) instead of Ubuntu (Debian-based).
+- **Fix:** Use `sudo dnf install -y curl unzip` on Amazon Linux.
 
 ### Lesson 2: Bash Wildcard Shell Expansion Pitfall
-* **Symptom:** Systemd reported `status=203/EXEC` and service repeatedly crashed because `/usr/local/bin/fake-service` was missing.
-* **Root Cause:** `mv fake*service* /usr/local/bin/fake-service` matched both `fake-service` (binary) and `fake_service_linux_amd64.zip` (archive). When `mv` is given multiple source files, the destination must be an existing directory, so the command silently aborted.
-* **Fix:** Use exact filename copies: `sudo cp fake-service /usr/local/bin/fake-service 2>/dev/null || sudo cp fake_service /usr/local/bin/fake-service`.
+
+- **Symptom:** Systemd reported `status=203/EXEC` and service repeatedly crashed because `/usr/local/bin/fake-service` was missing.
+- **Root Cause:** `mv fake*service* /usr/local/bin/fake-service` matched both `fake-service` (binary) and `fake_service_linux_amd64.zip` (archive). When `mv` is given multiple source files, the destination must be an existing directory, so the command silently aborted.
+- **Fix:** Use exact filename copies: `sudo cp fake-service /usr/local/bin/fake-service 2>/dev/null || sudo cp fake_service /usr/local/bin/fake-service`.
 
 ### Lesson 3: Asymmetric Routing in VPC Peering
-* **Symptom:** `ping 192.168.1.141` from Profile yielded `100% packet loss` and HTTP calls timed out after 30 seconds (`context deadline exceeded`).
-* **Root Cause:** Forward route existed in Profile Route Table, but the reverse route (`10.0.0.0/16` $\rightarrow$ `pcx`) was missing in the Account Route Table. TCP SYN packets reached Account, but TCP SYN-ACK replies were dropped.
-* **Fix:** Always verify bidirectional routes exist in both peer route tables.
+
+- **Symptom:** `ping 192.168.1.141` from Profile yielded `100% packet loss` and HTTP calls timed out after 30 seconds (`context deadline exceeded`).
+- **Root Cause:** Forward route existed in Profile Route Table, but the reverse route (`10.0.0.0/16` $\rightarrow$ `pcx`) was missing in the Account Route Table. TCP SYN packets reached Account, but TCP SYN-ACK replies were dropped.
+- **Fix:** Always verify bidirectional routes exist in both peer route tables.
 
 ### Lesson 4: Subnet Route Table Associations
-* **Symptom:** EC2 Instance Connect displayed `Instance is not in public subnet` warning.
-* **Root Cause:** When subnets are created, they implicitly associate with the VPC Main Route Table until explicitly attached to custom route tables.
-* **Fix:** Always edit **Subnet associations** on the custom Route Table to explicitly associate target subnets.
+
+- **Symptom:** EC2 Instance Connect displayed `Instance is not in public subnet` warning.
+- **Root Cause:** When subnets are created, they implicitly associate with the VPC Main Route Table until explicitly attached to custom route tables.
+- **Fix:** Always edit **Subnet associations** on the custom Route Table to explicitly associate target subnets.
 
 ---
 
 ## 7. Teardown & Clean Up Order
 
 To avoid AWS dependency errors and avoid ongoing charges when tearing down the lab, delete resources in this specific order:
-1. **Route 53:** Delete the `profile.achn-chan.space` Alias `A` Record.
+
+1. **Route 53:** Delete the `banking.achn-chan.space` Alias `A` Record.
 2. **Application Load Balancer:** Delete `hc-profile-alb` and Target Group `hc-profile-tg`.
 3. **EC2 Instances:** Terminate `profile-instance`, `account-instance`, and `statement-instance`.
 4. **VPC Peering Connections:** Delete `profile-to-account-pcx` and `account-to-statement-pcx` (this automatically cleans up peering routes).
