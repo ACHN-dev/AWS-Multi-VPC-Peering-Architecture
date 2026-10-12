@@ -144,12 +144,12 @@ Even with peering routes configured, network access is strictly governed by stat
 
 ## 4. Network Specifications & IP Plan
 
-| Resource Name          | Layer / Tier           | VPC CIDR         | Subnet CIDR & AZ                         | Private IP (Example) | Listening Port                                          | Upstream Target             |
-| :--------------------- | :--------------------- | :--------------- | :--------------------------------------- | :------------------- | :------------------------------------------------------ | :-------------------------- |
-| **`hc-profile-vpc`**   | Profile Tier           | `10.0.0.0/16`    | `10.0.1.0/24` (1a)<br>`10.0.2.0/24` (1b) | `10.0.1.31`          | `9091` (`customer-profile-svc`)                         | `http://192.168.1.141:9092` |
-| **`hc-account-vpc`**   | Backend Account Tier   | `192.168.0.0/16` | `192.168.1.0/24` (1a)                    | `192.168.1.141`      | `9092` (`account-svc`)                                  | `http://172.16.1.201:9093`  |
-| **`hc-statement-vpc`** | Backend Statement Tier | `172.16.0.0/16`  | `172.16.1.0/24` (1a)                     | `172.16.1.201`       | `9093` (`statement-svc`)                                | None (Leaf Node)            |
-| **`hc-profile-alb`**   | Ingress Load Balancer  | `10.0.0.0/16`    | Multi-AZ (1a & 1b)                       | Dynamic AWS ENIs     | `80` (HTTP) $\rightarrow$ 301 Redirect<br>`443` (HTTPS) | `hc-profile-tg` (:9091)     |
+| Resource Name          | Layer / Tier           | VPC CIDR         | Subnet CIDR & AZ                         | IP Exposure Type        | Example IP                                         | Listening Port                                          | Upstream Target             |
+| :--------------------- | :--------------------- | :--------------- | :--------------------------------------- | :---------------------- | :------------------------------------------------- | :------------------------------------------------------ | :-------------------------- |
+| **`hc-profile-vpc`**   | Profile / Ingress Tier | `10.0.0.0/16`    | `10.0.1.0/24` (1a)<br>`10.0.2.0/24` (1b) | **Public & Private**    | `10.0.1.31` (Private)<br>`47.128.150.233` (Public) | `9091` (`customer-profile-svc`)                         | `http://192.168.1.141:9092` |
+| **`hc-account-vpc`**   | Backend Account Tier   | `192.168.0.0/16` | `192.168.1.0/24` (1a)                    | **Strictly Private 🔒** | `192.168.1.141` (Zero Public IP)                   | `9092` (`account-svc`)                                  | `http://172.16.1.201:9093`  |
+| **`hc-statement-vpc`** | Backend Statement Tier | `172.16.0.0/16`  | `172.16.1.0/24` (1a)                     | **Strictly Private 🔒** | `172.16.1.201` (Zero Public IP)                   | `9093` (`statement-svc`)                                | None (Leaf Node)            |
+| **`hc-profile-alb`**   | Ingress Load Balancer  | `10.0.0.0/16`    | Multi-AZ (1a & 1b)                       | **Internet-Facing**     | Dynamic AWS ENIs                                   | `80` (HTTP) $\rightarrow$ 301 Redirect<br>`443` (HTTPS) | `hc-profile-tg` (:9091)     |
 
 > [!NOTE]
 > **Dynamic IP Allocation Notice:**
@@ -243,34 +243,69 @@ Even with peering routes configured, network access is strictly governed by stat
   - `HTTPS` (Port 443) $\rightarrow$ Source: `0.0.0.0/0`
 - **Outbound Rules:** All traffic (`0.0.0.0/0`)
 
-#### 2. `hc-profile-sg` (Profile EC2 Ingress)
+#### 2. `hc-bastion-sg` (Bastion Jump Host Ingress)
+
+- **VPC:** `hc-profile-vpc`
+- **Inbound Rules:**
+  - `SSH` (Port 22) $\rightarrow$ Source: `My IP` (or Admin IP / `0.0.0.0/0`)
+- **Outbound Rules:** All traffic (`0.0.0.0/0`)
+
+#### 3. `hc-profile-sg` (Profile EC2 Ingress)
 
 - **VPC:** `hc-profile-vpc`
 - **Inbound Rules:**
   - `Custom TCP` (Port 9091) $\rightarrow$ Source: `hc-alb-sg` (or `0.0.0.0/0`)
-  - `SSH` (Port 22) $\rightarrow$ Source: Admin IP
+  - `SSH` (Port 22) $\rightarrow$ Source: Admin IP (or `hc-bastion-sg`)
   - `All ICMP - IPv4` $\rightarrow$ Source: `0.0.0.0/0`
 - **Outbound Rules:** All traffic (`0.0.0.0/0`)
 
-#### 3. `hc-backend-sg` (Account EC2 Ingress - Private Lockdown)
+#### 4. `hc-backend-sg` (Account EC2 Ingress - Private Lockdown)
 
 - **VPC:** `hc-account-vpc`
 - **Inbound Rules:**
   - `Custom TCP` (Port 9092) $\rightarrow$ Source: **`10.0.0.0/16`** (Profile VPC CIDR only)
+  - `SSH` (Port 22) $\rightarrow$ Source: **`10.0.0.0/16`** (Profile VPC CIDR / Bastion Host for secure SSH Jump)
   - `All ICMP - IPv4` $\rightarrow$ Source: **`10.0.0.0/16`** (Profile VPC CIDR only)
 - **Outbound Rules:** All traffic (`0.0.0.0/0`)
 
-#### 4. `hc-statement-sg` (Statement EC2 Ingress - Private Lockdown)
+#### 5. `hc-statement-sg` (Statement EC2 Ingress - Private Lockdown)
 
 - **VPC:** `hc-statement-vpc`
 - **Inbound Rules:**
   - `Custom TCP` (Port 9093) $\rightarrow$ Source: **`192.168.0.0/16`** (Account VPC CIDR only)
+  - `SSH` (Port 22) $\rightarrow$ Source: **`192.168.0.0/16`** (Account VPC CIDR for secure SSH Jump)
   - `All ICMP - IPv4` $\rightarrow$ Source: **`192.168.0.0/16`** (Account VPC CIDR only)
 - **Outbound Rules:** All traffic (`0.0.0.0/0`)
 
 ---
 
 ### Step 6: EC2 Provisioning & Systemd Microservices Deployment
+
+#### 🔒 Network Exposure Policy (Public vs. Private Tiers)
+In strict alignment with enterprise banking security standards, instances follow a zero-trust network allocation:
+- **`profile-instance` (or `hc-bastion-host`):** Resides in `hc-profile-vpc` public subnet $\rightarrow$ **Auto-assign public IP: `Enable`**.
+- **`account-instance` & `statement-instance`:** Reside in backend VPCs $\rightarrow$ **Auto-assign public IP: `Disable` (Strictly Private — Zero Public IP Exposure)**.
+
+#### 🔑 Accessing Strictly Private Instances (How to Connect Without a Public IP)
+Because backend instances have no public IPv4 address, standard browser EC2 Instance Connect cannot connect directly over the public internet. Use one of two secure access methods:
+
+**Method 1: SSH ProxyJump via Bastion Host (Recommended CLI Method)**
+Launch a small `t2.micro` Bastion host (`hc-bastion-host`) in `hc-profile-subnet-01` with `hc-bastion-sg` and a public IP, or use `profile-instance`. From your local terminal, jump through the Bastion directly into the private instances without exposing keys:
+```bash
+# 1. Connect to Account Instance (192.168.1.141) via Bastion Host:
+ssh -i your-key.pem -J ec2-user@<BASTION-PUBLIC-IP> ec2-user@192.168.1.141
+
+# 2. Connect to Statement Instance (172.16.1.201) via Bastion -> Account Jump:
+ssh -i your-key.pem -J ec2-user@<BASTION-PUBLIC-IP>,ec2-user@192.168.1.141 ec2-user@172.16.1.201
+```
+
+**Method 2: EC2 Instance Connect Endpoint (EIC Endpoint — Zero-Public-IP Browser Access)**
+In the AWS Console, navigate to **VPC $\rightarrow$ Endpoints $\rightarrow$ Create endpoint**. Select **EC2 Instance Connect Endpoint** for the target private VPC. Once created (free of charge), select the private instance in EC2 Console $\rightarrow$ **Connect** $\rightarrow$ **EC2 Instance Connect Endpoint** tab $\rightarrow$ Click **Connect** to open a secure browser terminal with zero public IP.
+
+**Method 3: Automated Bootstrap via EC2 User Data (No SSH Required)**
+Paste the deployment bash script directly into the **User Data** block (under **Advanced details** in the EC2 Launch wizard). The instance will automatically download `fake-service` and start the systemd daemon upon initial boot.
+
+---
 
 Launch instances in reverse dependency order: **Statement $\rightarrow$ Account $\rightarrow$ Profile**.
 
