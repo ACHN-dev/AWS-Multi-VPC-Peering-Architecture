@@ -8,8 +8,9 @@
 
 - [1. Executive Summary](#1-executive-summary)
 - [2. Architectural Diagram](#2-architectural-diagram)
-- [3. Network Specifications & IP Plan](#3-network-specifications--ip-plan)
-- [4. Step-by-Step Implementation Guide](#4-step-by-step-implementation-guide)
+- [3. Architecture Rationale & Design Decisions](#3-architecture-rationale--design-decisions)
+- [4. Network Specifications & IP Plan](#4-network-specifications--ip-plan)
+- [5. Step-by-Step Implementation Guide](#5-step-by-step-implementation-guide)
   - [Step 1: VPCs & Subnets Foundation](#step-1-vpcs--subnets-foundation)
   - [Step 2: Internet Gateways (IGW)](#step-2-internet-gateways-igw)
   - [Step 3: Intra-Region VPC Peering Connections](#step-3-intra-region-vpc-peering-connections)
@@ -18,9 +19,9 @@
   - [Step 6: EC2 Provisioning & Systemd Microservices Deployment](#step-6-ec2-provisioning--systemd-microservices-deployment)
   - [Step 7: Application Load Balancer (ALB) & Target Group Setup](#step-7-application-load-balancer-alb--target-group-setup)
   - [Step 8: ACM SSL/TLS Certificate & Route 53 Custom Domain](#step-8-acm-ssltls-certificate--route-53-custom-domain)
-- [5. Verification & Testing](#5-verification--testing)
-- [6. Troubleshooting & Engineering Lessons Learned](#6-troubleshooting--engineering-lessons-learned)
-- [7. Teardown & Clean Up Order](#7-teardown--clean-up-order)
+- [6. Verification & Testing](#6-verification--testing)
+- [7. Troubleshooting & Engineering Lessons Learned](#7-troubleshooting--engineering-lessons-learned)
+- [8. Teardown & Clean Up Order](#8-teardown--clean-up-order)
 
 ---
 
@@ -100,7 +101,48 @@ This project implements an enterprise-grade, secure **3-Tier Retail Banking Micr
 
 ---
 
-## 3. Network Specifications & IP Plan
+## 3. Architecture Rationale & Design Decisions
+
+### 1. Multi-VPC Isolation over Single-VPC Architecture
+- **Blast Radius Containment:** In a single VPC with multiple subnets, all subnets share the default local route (`local`) and can communicate across the VPC by default unless complex Network ACLs or security rules are continuously enforced. Isolating microservice tiers into separate VPCs establishes a hard network perimeter. If the public-facing Profile tier is compromised, attackers cannot traverse to the Core Account or Statement tiers at the network layer.
+- **Regulatory & Compliance Alignment (PCI-DSS & Basel):** Banking and financial standards require strict segregation of customer identification/profile data, transactional core ledger databases, and sensitive statement repositories across distinct administrative and network domains.
+
+### 2. Non-Transitive Peering as a Structural Security Boundary
+- By AWS design, VPC Peering is **strictly non-transitive**:
+  ```
+  [Profile VPC] <─── Peering 1 ───> [Account VPC] <─── Peering 2 ───> [Statement VPC]
+        │                                                                   ▲
+        └──────────────────────── X (Direct Access Prohibited) ─────────────┘
+  ```
+- **Enforced Microservices Chaining:** Profile VPC has no route to Statement VPC. Traffic cannot skip the Account tier. Any request seeking bank statement records must pass through the `Account Service` for intermediate business validation, identity checks, and authentication.
+
+### 3. VPC Peering vs. Transit Gateway (TGW) & NAT Gateways
+- **Zero Base Cost:** AWS Transit Gateway incurs an hourly attachment fee (~$36/month per VPC, exceeding $100/month for 3 VPCs) plus data processing charges. VPC Peering has **zero hourly base fee** and only charges standard intra-region data transfer rates ($0.01/GB), making it the optimal, cost-efficient choice for multi-tier microservices architectures with low-to-medium VPC counts.
+- **Sub-Millisecond Latency:** VPC Peering routes directly across AWS’s global fiber backbone without passing through virtual appliance middle-boxes, eliminating throughput bottlenecks and delivering sub-millisecond point-to-point latency.
+
+### 4. Application Load Balancer (ALB) over Direct EC2 Exposure
+- **Topology Hiding & Reverse Proxy:** The EC2 instance private IP (`10.0.1.31`) and service port (`9091`) remain completely hidden from the public internet. External clients only communicate with the ALB frontend.
+- **Multi-AZ High Availability:** The ALB is provisioned across multiple Availability Zones (`ap-southeast-1a` and `ap-southeast-1b`), ensuring automatic failover if a single data center experiences downtime.
+- **SSL/TLS Hardware Offloading:** Computing-heavy TLS handshakes and packet decryption occur at the ALB layer, allowing downstream microservices to operate with minimal CPU overhead.
+
+### 5. Private Security Group Lockdown (Principle of Least Privilege)
+Even with peering routes configured, network access is strictly governed by stateful Security Group firewalls:
+
+| Security Group | Inbound Port | Allowed Source | Architectural Rationale |
+| :--- | :--- | :--- | :--- |
+| **`hc-alb-sg`** | `80`, `443` | `0.0.0.0/0` (Internet) | Enables public client access over encrypted HTTPS (and HTTP redirect). |
+| **`hc-profile-sg`** | `9091` | `hc-alb-sg` (ALB SG ID) | Completely blocks direct public access; only accepts traffic forwarded by the ALB. |
+| **`hc-backend-sg`** | `9092` | `10.0.0.0/16` (Profile VPC CIDR) | Restricts Account service access exclusively to the Profile tier. |
+| **`hc-statement-sg`** | `9093` | `192.168.0.0/16` (Account VPC CIDR) | Restricts Statement service access exclusively to the Account tier (Profile tier blocked). |
+
+### 6. ACM SSL/TLS & Route 53 Custom Domain (`banking.achn-chan.space`)
+- **Data-in-Transit Encryption:** Financial applications require end-to-end encrypted transit. ACM provides a free, auto-renewing SSL/TLS certificate to secure traffic against eavesdropping and Man-in-the-Middle (MITM) exploits.
+- **Enforced HTTPS (301 Redirect):** Port 80 HTTP requests are automatically redirected to Port 443 HTTPS.
+- **Route 53 DNS Alias:** Provides seamless, branded DNS routing to the dynamic ALB DNS endpoint without recurring DNS query fees.
+
+---
+
+## 4. Network Specifications & IP Plan
 
 | Resource Name          | Layer / Tier           | VPC CIDR         | Subnet CIDR & AZ                         | Private IP       | Listening Port                                          | Upstream Target             |
 | :--------------------- | :--------------------- | :--------------- | :--------------------------------------- | :--------------- | :------------------------------------------------------ | :-------------------------- |
@@ -111,7 +153,7 @@ This project implements an enterprise-grade, secure **3-Tier Retail Banking Micr
 
 ---
 
-## 4. Step-by-Step Implementation Guide
+## 5. Step-by-Step Implementation Guide
 
 ### Step 1: VPCs & Subnets Foundation
 
@@ -369,7 +411,7 @@ sudo systemctl status customer-profile-svc
 
 ---
 
-## 5. Verification & Testing
+## 6. Verification & Testing
 
 ### Test 1: Intermediate Chain Verification (Account $\rightarrow$ Statement)
 
@@ -454,7 +496,7 @@ server: awselb/2.0
 
 ---
 
-## 6. Troubleshooting & Engineering Lessons Learned
+## 7. Troubleshooting & Engineering Lessons Learned
 
 ### Lesson 1: Package Manager Discrepancy (`apt-get` vs `dnf`)
 
@@ -482,7 +524,7 @@ server: awselb/2.0
 
 ---
 
-## 7. Teardown & Clean Up Order
+## 8. Teardown & Clean Up Order
 
 To avoid AWS dependency errors and avoid ongoing charges when tearing down the lab, delete resources in this specific order:
 
