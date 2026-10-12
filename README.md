@@ -144,12 +144,19 @@ Even with peering routes configured, network access is strictly governed by stat
 
 ## 4. Network Specifications & IP Plan
 
-| Resource Name          | Layer / Tier           | VPC CIDR         | Subnet CIDR & AZ                         | Private IP       | Listening Port                                          | Upstream Target             |
-| :--------------------- | :--------------------- | :--------------- | :--------------------------------------- | :--------------- | :------------------------------------------------------ | :-------------------------- |
-| **`hc-profile-vpc`**   | Profile Tier           | `10.0.0.0/16`    | `10.0.1.0/24` (1a)<br>`10.0.2.0/24` (1b) | `10.0.1.31`      | `9091` (`customer-profile-svc`)                         | `http://192.168.1.141:9092` |
-| **`hc-account-vpc`**   | Backend Account Tier   | `192.168.0.0/16` | `192.168.1.0/24` (1a)                    | `192.168.1.141`  | `9092` (`account-svc`)                                  | `http://172.16.1.201:9093`  |
-| **`hc-statement-vpc`** | Backend Statement Tier | `172.16.0.0/16`  | `172.16.1.0/24` (1a)                     | `172.16.1.201`   | `9093` (`statement-svc`)                                | None (Leaf Node)            |
-| **`hc-profile-alb`**   | Ingress Load Balancer  | `10.0.0.0/16`    | Multi-AZ (1a & 1b)                       | Dynamic AWS ENIs | `80` (HTTP) $\rightarrow$ 301 Redirect<br>`443` (HTTPS) | `hc-profile-tg` (:9091)     |
+| Resource Name          | Layer / Tier           | VPC CIDR         | Subnet CIDR & AZ                         | Private IP (Example) | Listening Port                                          | Upstream Target             |
+| :--------------------- | :--------------------- | :--------------- | :--------------------------------------- | :------------------- | :------------------------------------------------------ | :-------------------------- |
+| **`hc-profile-vpc`**   | Profile Tier           | `10.0.0.0/16`    | `10.0.1.0/24` (1a)<br>`10.0.2.0/24` (1b) | `10.0.1.31`          | `9091` (`customer-profile-svc`)                         | `http://192.168.1.141:9092` |
+| **`hc-account-vpc`**   | Backend Account Tier   | `192.168.0.0/16` | `192.168.1.0/24` (1a)                    | `192.168.1.141`      | `9092` (`account-svc`)                                  | `http://172.16.1.201:9093`  |
+| **`hc-statement-vpc`** | Backend Statement Tier | `172.16.0.0/16`  | `172.16.1.0/24` (1a)                     | `172.16.1.201`       | `9093` (`statement-svc`)                                | None (Leaf Node)            |
+| **`hc-profile-alb`**   | Ingress Load Balancer  | `10.0.0.0/16`    | Multi-AZ (1a & 1b)                       | Dynamic AWS ENIs     | `80` (HTTP) $\rightarrow$ 301 Redirect<br>`443` (HTTPS) | `hc-profile-tg` (:9091)     |
+
+> [!NOTE]
+> **Dynamic IP Allocation Notice:**
+> By default, AWS assigns dynamic Private IPv4 addresses to EC2 instances via DHCP from available addresses in each subnet pool. The IPs documented above (`10.0.1.31`, `192.168.1.141`, and `172.16.1.201`) are **concrete reference values** captured during this deployment run. When recreating this lab:
+> 1. Check your newly launched instance's actual assigned Private IPv4 address in the **AWS EC2 Console**.
+> 2. Replace the upstream URLs in your service configurations with your actual dynamic Private IPs (e.g., `UPSTREAM_URIS=http://<actual-statement-ip>:9093`).
+> 3. *(Optional)* Alternatively, you can explicitly enforce static private IPs at launch by navigating to **Network settings $\rightarrow$ Advanced network configuration $\rightarrow$ Primary IP** and typing the exact IP.
 
 ---
 
@@ -266,6 +273,10 @@ Even with peering routes configured, network access is strictly governed by stat
 ### Step 6: EC2 Provisioning & Systemd Microservices Deployment
 
 Launch instances in reverse dependency order: **Statement $\rightarrow$ Account $\rightarrow$ Profile**.
+
+> [!IMPORTANT]
+> **Dynamic Private IP Notice:**
+> AWS allocates Private IPs dynamically on instance launch. The IPs shown below (`172.16.1.201`, `192.168.1.141`, `10.0.1.31`) are reference values from our deployment. Make sure to note each instance's **actual Private IP** from the AWS Console and substitute it into the `UPSTREAM_URIS` parameters below.
 
 #### Instance 1: Statement Service (`statement-instance`)
 
