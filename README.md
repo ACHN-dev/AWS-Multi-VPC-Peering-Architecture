@@ -16,9 +16,10 @@
   - [Step 3: Intra-Region VPC Peering Connections](#step-3-intra-region-vpc-peering-connections)
   - [Step 4: Route Tables & Bidirectional Peering Routing](#step-4-route-tables--bidirectional-peering-routing)
   - [Step 5: Security Groups & Private Network Lockdown](#step-5-security-groups--private-network-lockdown)
-  - [Step 6: EC2 Provisioning & Systemd Microservices Deployment](#step-6-ec2-provisioning--systemd-microservices-deployment)
-  - [Step 7: Application Load Balancer (ALB) & Target Group Setup](#step-7-application-load-balancer-alb--target-group-setup)
-  - [Step 8: ACM SSL/TLS Certificate & Route 53 Custom Domain](#step-8-acm-ssltls-certificate--route-53-custom-domain)
+  - [Step 6: Bastion Jump Host Setup & Private Subnet Access](#step-6-bastion-jump-host-setup--private-subnet-access)
+  - [Step 7: EC2 Provisioning & Systemd Microservices Deployment](#step-7-ec2-provisioning--systemd-microservices-deployment)
+  - [Step 8: Application Load Balancer (ALB) & Target Group Setup](#step-8-application-load-balancer-alb--target-group-setup)
+  - [Step 9: ACM SSL/TLS Certificate & Route 53 Custom Domain](#step-9-acm-ssltls-certificate--route-53-custom-domain)
 - [6. Verification & Testing](#6-verification--testing)
 - [7. Troubleshooting & Engineering Lessons Learned](#7-troubleshooting--engineering-lessons-learned)
 - [8. Teardown & Clean Up Order](#8-teardown--clean-up-order)
@@ -279,33 +280,80 @@ Even with peering routes configured, network access is strictly governed by stat
 
 ---
 
-### Step 6: EC2 Provisioning & Systemd Microservices Deployment
+### Step 6: Bastion Jump Host Setup & Private Subnet Access
+
+To manage and configure strictly private EC2 instances in backend VPCs (`Account` and `Statement`) without assigning them public IP addresses, a hardened **Bastion Host (Jump Box)** is provisioned in the public subnet of the Profile VPC.
+
+#### 1. Click-by-Click Bastion Provisioning (`hc-bastion-host`)
+1. In the AWS Console, navigate to **EC2 Console** $\rightarrow$ Click **Launch instances**.
+2. **Name and tags:** `hc-bastion-host`
+3. **Application and OS Images (AMI):** Select `Amazon Linux 2023 AMI` (Free tier eligible).
+4. **Instance type:** `t2.micro` (or `t3.micro`).
+5. **Key pair (login):** Select an existing key pair or click **Create new key pair** (e.g. `banking-key.pem`).
+6. **Network settings:** Click **Edit**:
+   - **VPC:** Select **`hc-profile-vpc`**.
+   - **Subnet:** Select **`hc-profile-subnet-01`** (Public Subnet in `ap-southeast-1a`).
+   - **Auto-assign public IP:** Select **`Enable`** *(Required to accept SSH ingress from your workstation)*.
+   - **Firewall (security groups):** Select **Select existing security group** $\rightarrow$ Choose **`hc-bastion-sg`**.
+7. Click the orange **Launch instance** button.
+8. From the Instances dashboard, note the assigned **Public IPv4 address** of `hc-bastion-host`.
+
+#### 2. Keyless SSH ProxyJump Workflow (Zero Keys Stored on Server)
+In compliance with enterprise security standards, **never copy or store private key files (`.pem`) on the Bastion host**. Connect directly from your local terminal using **SSH ProxyJump (`-J`)**, which tunnels SSH traffic end-to-end through memory without writing keys to disk:
+
+```bash
+# 1. Set strict read-only permissions on your local key:
+chmod 400 banking-key.pem
+
+# 2. SSH into Account Private Instance (192.168.1.141) jumping through Bastion:
+ssh -i banking-key.pem -J ec2-user@<BASTION-PUBLIC-IP> ec2-user@192.168.1.141
+
+# 3. Multi-Hop SSH into Statement Private Instance (172.16.1.201):
+# (Because Profile VPC has non-transitive peering, jump Bastion -> Account -> Statement)
+ssh -i banking-key.pem -J ec2-user@<BASTION-PUBLIC-IP>,ec2-user@192.168.1.141 ec2-user@172.16.1.201
+```
+
+#### 3. Optional: Developer Convenience Config (`~/.ssh/config`)
+Add the following configuration block to your local workstation's `~/.ssh/config` file:
+```ssh-config
+Host bastion
+    HostName <BASTION-PUBLIC-IP>
+    User ec2-user
+    IdentityFile ~/.ssh/banking-key.pem
+
+Host account-instance
+    HostName 192.168.1.141
+    User ec2-user
+    ProxyJump bastion
+    IdentityFile ~/.ssh/banking-key.pem
+
+Host statement-instance
+    HostName 172.16.1.201
+    User ec2-user
+    ProxyJump account-instance
+    IdentityFile ~/.ssh/banking-key.pem
+```
+Once saved, you can access your private instances with a single friendly command:
+```bash
+ssh statement-instance
+```
+
+#### 4. Alternative Method: EC2 Instance Connect Endpoint (Zero-Public-IP Browser Access)
+If you prefer AWS Console browser terminals over CLI SSH:
+1. Navigate to **VPC Console** $\rightarrow$ **Endpoints** $\rightarrow$ **Create endpoint**.
+2. **Name:** `statement-eic-endpoint` | **Service category:** `EC2 Instance Connect Endpoint`.
+3. **VPC:** Select target backend VPC (`hc-statement-vpc` or `hc-account-vpc`).
+4. **Subnet:** Select target private subnet $\rightarrow$ Click **Create endpoint** (Free of charge).
+5. Once **Available**, open **EC2 Console** $\rightarrow$ Select private instance $\rightarrow$ Click **Connect** $\rightarrow$ Select the **EC2 Instance Connect Endpoint** tab $\rightarrow$ Click **Connect**.
+
+---
+
+### Step 7: EC2 Provisioning & Systemd Microservices Deployment
 
 #### 🔒 Network Exposure Policy (Public vs. Private Tiers)
 In strict alignment with enterprise banking security standards, instances follow a zero-trust network allocation:
-- **`profile-instance` (or `hc-bastion-host`):** Resides in `hc-profile-vpc` public subnet $\rightarrow$ **Auto-assign public IP: `Enable`**.
+- **`profile-instance` (and `hc-bastion-host`):** Reside in `hc-profile-vpc` public subnet $\rightarrow$ **Auto-assign public IP: `Enable`**.
 - **`account-instance` & `statement-instance`:** Reside in backend VPCs $\rightarrow$ **Auto-assign public IP: `Disable` (Strictly Private — Zero Public IP Exposure)**.
-
-#### 🔑 Accessing Strictly Private Instances (How to Connect Without a Public IP)
-Because backend instances have no public IPv4 address, standard browser EC2 Instance Connect cannot connect directly over the public internet. Use one of two secure access methods:
-
-**Method 1: SSH ProxyJump via Bastion Host (Recommended CLI Method)**
-Launch a small `t2.micro` Bastion host (`hc-bastion-host`) in `hc-profile-subnet-01` with `hc-bastion-sg` and a public IP, or use `profile-instance`. From your local terminal, jump through the Bastion directly into the private instances without exposing keys:
-```bash
-# 1. Connect to Account Instance (192.168.1.141) via Bastion Host:
-ssh -i your-key.pem -J ec2-user@<BASTION-PUBLIC-IP> ec2-user@192.168.1.141
-
-# 2. Connect to Statement Instance (172.16.1.201) via Bastion -> Account Jump:
-ssh -i your-key.pem -J ec2-user@<BASTION-PUBLIC-IP>,ec2-user@192.168.1.141 ec2-user@172.16.1.201
-```
-
-**Method 2: EC2 Instance Connect Endpoint (EIC Endpoint — Zero-Public-IP Browser Access)**
-In the AWS Console, navigate to **VPC $\rightarrow$ Endpoints $\rightarrow$ Create endpoint**. Select **EC2 Instance Connect Endpoint** for the target private VPC. Once created (free of charge), select the private instance in EC2 Console $\rightarrow$ **Connect** $\rightarrow$ **EC2 Instance Connect Endpoint** tab $\rightarrow$ Click **Connect** to open a secure browser terminal with zero public IP.
-
-**Method 3: Automated Bootstrap via EC2 User Data (No SSH Required)**
-Paste the deployment bash script directly into the **User Data** block (under **Advanced details** in the EC2 Launch wizard). The instance will automatically download `fake-service` and start the systemd daemon upon initial boot.
-
----
 
 Launch instances in reverse dependency order: **Statement $\rightarrow$ Account $\rightarrow$ Profile**.
 
@@ -419,7 +467,7 @@ sudo systemctl status customer-profile-svc
 
 ---
 
-### Step 7: Application Load Balancer (ALB) & Target Group Setup
+### Step 8: Application Load Balancer (ALB) & Target Group Setup
 
 1. **Target Group (`hc-profile-tg`):**
    - Target type: `Instances` | Name: `hc-profile-tg` | Protocol: `HTTP` | Port: `9091`
@@ -434,7 +482,7 @@ sudo systemctl status customer-profile-svc
 
 ---
 
-### Step 8: ACM SSL/TLS Certificate & Route 53 Custom Domain
+### Step 9: ACM SSL/TLS Certificate & Route 53 Custom Domain
 
 1. **AWS Certificate Manager (ACM):**
    - In `ap-southeast-1`, click **Request certificate** $\rightarrow$ **Request a public certificate**.
