@@ -27,7 +27,7 @@
 This project implements an enterprise-grade, secure **3-Tier Retail Banking Microservices Architecture** on AWS in the **Singapore (`ap-southeast-1`)** region. 
 
 ### Key Architectural Highlights:
-* **Microservices Chaining:** `customer-profile-svc` (Frontend) $\rightarrow$ `account-svc` (Backend Tier 1) $\rightarrow$ `statement-svc` (Backend Tier 2).
+* **Microservices Chaining:** `customer-profile-svc` (Profile) $\rightarrow$ `account-svc` (Account) $\rightarrow$ `statement-svc` (Statement).
 * **Multi-VPC Isolation:** Each service resides in its own dedicated Amazon Virtual Private Cloud (VPC) with unique non-overlapping IPv4 CIDR blocks.
 * **Non-Transitive VPC Peering:** Backend services have zero public ingress. Communications between tiers are strictly routed across private VPC Peering connections (`Profile <-> Account` and `Account <-> Statement`).
 * **High Availability & Security Ingress:** External user traffic enters via an Internet-facing **Application Load Balancer (ALB)** spanning multiple Availability Zones, secured with **AWS Certificate Manager (ACM)** SSL/TLS encryption on **Port 443** with automatic HTTP-to-HTTPS redirect, routed via **Amazon Route 53** custom domain (`profile.achn-chan.space`).
@@ -56,8 +56,8 @@ This project implements an enterprise-grade, secure **3-Tier Retail Banking Micr
                                               │ Forward to Target Group (Port 9091)
                                               ▼
  ╔═══════════════════════════════════════════════════════════════════════════════════╗
- ║ FRONTEND VPC: hc-frontend-vpc (CIDR: 10.0.0.0/16)                                 ║
- ║ Subnet: hc-frontend-subnet-01 (10.0.1.0/24)                                       ║
+ ║ PROFILE VPC: hc-profile-vpc (CIDR: 10.0.0.0/16)                                 ║
+ ║ Subnet: hc-profile-subnet-01 (10.0.1.0/24)                                       ║
  ║                                                                                   ║
  ║   ┌───────────────────────────────────────────────────────────┐                   ║
  ║   │ EC2 Instance: profile-instance                            │                   ║
@@ -101,7 +101,7 @@ This project implements an enterprise-grade, secure **3-Tier Retail Banking Micr
 
 | Resource Name | Layer / Tier | VPC CIDR | Subnet CIDR & AZ | Private IP | Listening Port | Upstream Target |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **`hc-frontend-vpc`** | Frontend Web Tier | `10.0.0.0/16` | `10.0.1.0/24` (1a)<br>`10.0.2.0/24` (1b) | `10.0.1.31` | `9091` (`customer-profile-svc`) | `http://192.168.1.141:9092` |
+| **`hc-profile-vpc`** | Profile Tier | `10.0.0.0/16` | `10.0.1.0/24` (1a)<br>`10.0.2.0/24` (1b) | `10.0.1.31` | `9091` (`customer-profile-svc`) | `http://192.168.1.141:9092` |
 | **`hc-account-vpc`** | Backend Account Tier | `192.168.0.0/16` | `192.168.1.0/24` (1a) | `192.168.1.141` | `9092` (`account-svc`) | `http://172.16.1.201:9093` |
 | **`hc-statement-vpc`**| Backend Statement Tier| `172.16.0.0/16` | `172.16.1.0/24` (1a) | `172.16.1.201` | `9093` (`statement-svc`) | None (Leaf Node) |
 | **`hc-profile-alb`** | Ingress Load Balancer | `10.0.0.0/16` | Multi-AZ (1a & 1b) | Dynamic AWS ENIs | `80` (HTTP) $\rightarrow$ 301 Redirect<br>`443` (HTTPS) | `hc-profile-tg` (:9091) |
@@ -113,14 +113,14 @@ This project implements an enterprise-grade, secure **3-Tier Retail Banking Micr
 ### Step 1: VPCs & Subnets Foundation
 1. Navigate to **VPC Console** in region **Singapore (`ap-southeast-1`)**.
 2. **Create VPCs:**
-   * **Frontend:** Name = `hc-frontend-vpc`, IPv4 CIDR = `10.0.0.0/16`.
+   * **Profile:** Name = `hc-profile-vpc`, IPv4 CIDR = `10.0.0.0/16`.
    * **Account:** Name = `hc-account-vpc`, IPv4 CIDR = `192.168.0.0/16`.
    * **Statement:** Name = `hc-statement-vpc`, IPv4 CIDR = `172.16.0.0/16`.
 3. **Enable DNS Hostnames:**
    * On all 3 VPCs: Select VPC $\rightarrow$ **Actions** $\rightarrow$ **Edit VPC settings** $\rightarrow$ Check **Enable DNS hostnames** $\rightarrow$ **Save changes**.
 4. **Create Subnets:**
-   * `hc-frontend-subnet-01`: CIDR `10.0.1.0/24`, AZ `ap-southeast-1a`.
-   * `hc-frontend-subnet-02`: CIDR `10.0.2.0/24`, AZ `ap-southeast-1b` *(Required for ALB multi-AZ requirement)*.
+   * `hc-profile-subnet-01`: CIDR `10.0.1.0/24`, AZ `ap-southeast-1a`.
+   * `hc-profile-subnet-02`: CIDR `10.0.2.0/24`, AZ `ap-southeast-1b` *(Required for ALB multi-AZ requirement)*.
    * `hc-account-subnet-01`: CIDR `192.168.1.0/24`, AZ `ap-southeast-1a`.
    * `hc-statement-subnet-01`: CIDR `172.16.1.0/24`, AZ `ap-southeast-1a`.
 
@@ -128,7 +128,7 @@ This project implements an enterprise-grade, secure **3-Tier Retail Banking Micr
 
 ### Step 2: Internet Gateways (IGW)
 1. Navigate to **Internet gateways** $\rightarrow$ **Create internet gateway**:
-   * Create `hc-frontend-igw` $\rightarrow$ Attach to `hc-frontend-vpc`.
+   * Create `hc-profile-igw` $\rightarrow$ Attach to `hc-profile-vpc`.
    * Create `hc-account-igw` $\rightarrow$ Attach to `hc-account-vpc`.
    * Create `hc-statement-igw` $\rightarrow$ Attach to `hc-statement-vpc`.
 
@@ -138,7 +138,7 @@ This project implements an enterprise-grade, secure **3-Tier Retail Banking Micr
 1. **Peering 1 (`profile-to-account-pcx`):**
    * Go to **Peering connections** $\rightarrow$ **Create peering connection**.
    * Name: `profile-to-account-pcx`
-   * Requester VPC: `hc-frontend-vpc` (`10.0.0.0/16`)
+   * Requester VPC: `hc-profile-vpc` (`10.0.0.0/16`)
    * Accepter VPC: `hc-account-vpc` (`192.168.0.0/16`)
    * Click **Create peering connection**, then select it $\rightarrow$ **Actions** $\rightarrow$ **Accept request**.
 2. **Peering 2 (`account-to-statement-pcx`):**
@@ -151,11 +151,11 @@ This project implements an enterprise-grade, secure **3-Tier Retail Banking Micr
 
 ### Step 4: Route Tables & Bidirectional Peering Routing
 
-#### 1. Frontend Route Table (`hc-frontend-public-rtb`)
-* **VPC:** `hc-frontend-vpc`
-* **Subnet Associations:** Explicitly associate `hc-frontend-subnet-01` and `hc-frontend-subnet-02`.
+#### 1. Profile Route Table (`hc-profile-public-rtb`)
+* **VPC:** `hc-profile-vpc`
+* **Subnet Associations:** Explicitly associate `hc-profile-subnet-01` and `hc-profile-subnet-02`.
 * **Routes:**
-  * `0.0.0.0/0` $\rightarrow$ Target: `Internet Gateway` (`hc-frontend-igw`)
+  * `0.0.0.0/0` $\rightarrow$ Target: `Internet Gateway` (`hc-profile-igw`)
   * `192.168.0.0/16` $\rightarrow$ Target: `Peering Connection` (`profile-to-account-pcx`)
 
 #### 2. Account Route Table (`hc-account-public-rtb`)
@@ -163,7 +163,7 @@ This project implements an enterprise-grade, secure **3-Tier Retail Banking Micr
 * **Subnet Associations:** Explicitly associate `hc-account-subnet-01`.
 * **Routes:**
   * `0.0.0.0/0` $\rightarrow$ Target: `Internet Gateway` (`hc-account-igw`)
-  * `10.0.0.0/16` $\rightarrow$ Target: `Peering Connection` (`profile-to-account-pcx`) *(Return path for Frontend)*
+  * `10.0.0.0/16` $\rightarrow$ Target: `Peering Connection` (`profile-to-account-pcx`) *(Return path for Profile)*
   * `172.16.0.0/16` $\rightarrow$ Target: `Peering Connection` (`account-to-statement-pcx`) *(Forward path to Statement)*
 
 #### 3. Statement Route Table (`hc-statement-public-rtb`)
@@ -178,14 +178,14 @@ This project implements an enterprise-grade, secure **3-Tier Retail Banking Micr
 ### Step 5: Security Groups & Private Network Lockdown
 
 #### 1. `hc-alb-sg` (ALB Public Ingress)
-* **VPC:** `hc-frontend-vpc`
+* **VPC:** `hc-profile-vpc`
 * **Inbound Rules:**
   * `HTTP` (Port 80) $\rightarrow$ Source: `0.0.0.0/0`
   * `HTTPS` (Port 443) $\rightarrow$ Source: `0.0.0.0/0`
 * **Outbound Rules:** All traffic (`0.0.0.0/0`)
 
-#### 2. `hc-frontend-sg` (Profile EC2 Ingress)
-* **VPC:** `hc-frontend-vpc`
+#### 2. `hc-profile-sg` (Profile EC2 Ingress)
+* **VPC:** `hc-profile-vpc`
 * **Inbound Rules:**
   * `Custom TCP` (Port 9091) $\rightarrow$ Source: `hc-alb-sg` (or `0.0.0.0/0`)
   * `SSH` (Port 22) $\rightarrow$ Source: Admin IP
@@ -195,8 +195,8 @@ This project implements an enterprise-grade, secure **3-Tier Retail Banking Micr
 #### 3. `hc-backend-sg` (Account EC2 Ingress - Private Lockdown)
 * **VPC:** `hc-account-vpc`
 * **Inbound Rules:**
-  * `Custom TCP` (Port 9092) $\rightarrow$ Source: **`10.0.0.0/16`** (Frontend VPC CIDR only)
-  * `All ICMP - IPv4` $\rightarrow$ Source: **`10.0.0.0/16`** (Frontend VPC CIDR only)
+  * `Custom TCP` (Port 9092) $\rightarrow$ Source: **`10.0.0.0/16`** (Profile VPC CIDR only)
+  * `All ICMP - IPv4` $\rightarrow$ Source: **`10.0.0.0/16`** (Profile VPC CIDR only)
 * **Outbound Rules:** All traffic (`0.0.0.0/0`)
 
 #### 4. `hc-statement-sg` (Statement EC2 Ingress - Private Lockdown)
@@ -278,8 +278,8 @@ sudo systemctl status account-svc
 ```
 
 #### Instance 3: Customer Profile Service (`profile-instance`)
-* **VPC / Subnet:** `hc-frontend-vpc` / `hc-frontend-subnet-01`
-* **Private IP:** `10.0.1.31` | **Security Group:** `hc-frontend-sg`
+* **VPC / Subnet:** `hc-profile-vpc` / `hc-profile-subnet-01`
+* **Private IP:** `10.0.1.31` | **Security Group:** `hc-profile-sg`
 * **Run in terminal:**
 ```bash
 sudo dnf install -y curl unzip
@@ -316,12 +316,12 @@ sudo systemctl status customer-profile-svc
 
 1. **Target Group (`hc-profile-tg`):**
    * Target type: `Instances` | Name: `hc-profile-tg` | Protocol: `HTTP` | Port: `9091`
-   * VPC: `hc-frontend-vpc` | Health check path: `/`
+   * VPC: `hc-profile-vpc` | Health check path: `/`
    * Register targets: Select `profile-instance` (`10.0.1.31`), port `9091` $\rightarrow$ Click **Include as pending below** $\rightarrow$ **Create target group**.
 2. **Application Load Balancer (`hc-profile-alb`):**
    * Name: `hc-profile-alb` | Scheme: `Internet-facing` | IP type: `IPv4`
-   * VPC: `hc-frontend-vpc`
-   * Mappings: `ap-southeast-1a` (`hc-frontend-subnet-01`) and `ap-southeast-1b` (`hc-frontend-subnet-02`)
+   * VPC: `hc-profile-vpc`
+   * Mappings: `ap-southeast-1a` (`hc-profile-subnet-01`) and `ap-southeast-1b` (`hc-profile-subnet-02`)
    * Security group: `hc-alb-sg`
    * Listener: `HTTP:80` $\rightarrow$ Forward to `hc-profile-tg` $\rightarrow$ Click **Create load balancer**.
 
@@ -440,8 +440,8 @@ server: awselb/2.0
 * **Fix:** Use exact filename copies: `sudo cp fake-service /usr/local/bin/fake-service 2>/dev/null || sudo cp fake_service /usr/local/bin/fake-service`.
 
 ### Lesson 3: Asymmetric Routing in VPC Peering
-* **Symptom:** `ping 192.168.1.141` from Frontend yielded `100% packet loss` and HTTP calls timed out after 30 seconds (`context deadline exceeded`).
-* **Root Cause:** Forward route existed in Frontend Route Table, but the reverse route (`10.0.0.0/16` $\rightarrow$ `pcx`) was missing in the Account Route Table. TCP SYN packets reached Account, but TCP SYN-ACK replies were dropped.
+* **Symptom:** `ping 192.168.1.141` from Profile yielded `100% packet loss` and HTTP calls timed out after 30 seconds (`context deadline exceeded`).
+* **Root Cause:** Forward route existed in Profile Route Table, but the reverse route (`10.0.0.0/16` $\rightarrow$ `pcx`) was missing in the Account Route Table. TCP SYN packets reached Account, but TCP SYN-ACK replies were dropped.
 * **Fix:** Always verify bidirectional routes exist in both peer route tables.
 
 ### Lesson 4: Subnet Route Table Associations
@@ -458,6 +458,6 @@ To avoid AWS dependency errors and avoid ongoing charges when tearing down the l
 2. **Application Load Balancer:** Delete `hc-profile-alb` and Target Group `hc-profile-tg`.
 3. **EC2 Instances:** Terminate `profile-instance`, `account-instance`, and `statement-instance`.
 4. **VPC Peering Connections:** Delete `profile-to-account-pcx` and `account-to-statement-pcx` (this automatically cleans up peering routes).
-5. **Security Groups:** Delete custom security groups (`hc-alb-sg`, `hc-frontend-sg`, `hc-backend-sg`, `hc-statement-sg`).
+5. **Security Groups:** Delete custom security groups (`hc-alb-sg`, `hc-profile-sg`, `hc-backend-sg`, `hc-statement-sg`).
 6. **Internet Gateways & Subnets:** Detach and delete IGWs, delete Subnets and Route Tables.
-7. **VPCs:** Delete `hc-frontend-vpc`, `hc-account-vpc`, and `hc-statement-vpc`.
+7. **VPCs:** Delete `hc-profile-vpc`, `hc-account-vpc`, and `hc-statement-vpc`.
